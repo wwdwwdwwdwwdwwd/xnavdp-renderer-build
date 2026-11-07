@@ -1,0 +1,51 @@
+name: Build acados t_renderer for Jetson (static ARM64)
+
+on:
+  push:
+    paths:
+      - .github/workflows/build_t_renderer_jetson.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - name: Install the ARM64 static-linking toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools build-essential file binutils
+          rustup default stable
+          rustup target add aarch64-unknown-linux-musl
+
+      - name: Build the official acados v0.2.0 renderer
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v0.2.0 https://github.com/acados/tera_renderer.git renderer
+          cd renderer
+          cargo build --release --target aarch64-unknown-linux-musl
+          BIN=target/aarch64-unknown-linux-musl/release/t_renderer
+          file "$BIN"
+          "$BIN" --help > /dev/null
+          if readelf -l "$BIN" | grep -q 'INTERP'; then
+            echo 'ERROR: renderer is not statically linked'
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$BIN" "$GITHUB_WORKSPACE/output/t_renderer"
+          ( cd "$GITHUB_WORKSPACE/output" && sha256sum t_renderer > SHA256SUMS )
+
+      - name: Upload static ARM64 renderer
+        uses: actions/upload-artifact@v4
+        with:
+          name: t_renderer-v0.2.0-linux-arm64-static
+          path: output/
+          if-no-files-found: error
+          retention-days: 7
